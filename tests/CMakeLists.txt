@@ -30,23 +30,11 @@ endfunction()
 
 # ─── Testes unitários ─────────────────────────────────────────────────────────
 
-# Adicionar conforme cada módulo for implementado:
-# add_ppcomp_test(test_lifecycle   test_lifecycle.cpp)
-# add_ppcomp_test(test_callbacks   test_callbacks.cpp)
-# add_ppcomp_test(test_mapping     test_mapping.cpp)
-# add_ppcomp_test(test_tables      test_tables.cpp)
-# add_ppcomp_test(test_detection   test_detection.cpp)
-# add_ppcomp_test(test_emv_ct      test_emv_ct.cpp)
-# add_ppcomp_test(test_emv_ctls    test_emv_ctls.cpp)
-# add_ppcomp_test(test_pin         test_pin.cpp)
-
-# ─── Testes de integração ────────────────────────────────────────────────────
-
-# add_ppcomp_test(test_homologacao_se
-#     integration/test_homologacao_se.cpp
-#     mocks/sdi_mock.cpp
-# )
-# add_ppcomp_test(test_homologacao_adquirentes
-#     integration/test_homologacao_adquirentes.cpp
-#     mocks/sdi_mock.cpp
-# )
+add_ppcomp_test(test_lifecycle   test_lifecycle.cpp   mocks/sdi_mock.cpp)
+add_ppcomp_test(test_mapping     test_mapping.cpp     mocks/sdi_mock.cpp)
+add_ppcomp_test(test_tables      test_tables.cpp      mocks/sdi_mock.cpp)
+add_ppcomp_test(test_emv_ct      test_emv_ct.cpp      mocks/sdi_mock.cpp)
+add_ppcomp_test(test_pin         test_pin.cpp         mocks/sdi_mock.cpp)
+add_ppcomp_test(test_detection   test_detection.cpp   mocks/sdi_mock.cpp)
+add_ppcomp_test(test_emv_ctls    test_emv_ctls.cpp    mocks/sdi_mock.cpp)
+add_ppcomp_test(test_callbacks   test_callbacks.cpp   mocks/sdi_mock.cpp)

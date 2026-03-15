@@ -8,6 +8,12 @@
 #include <mutex>
 #include "ppcomp_internal.h"
 
+#ifdef USE_SDI_MOCK
+#include "sdiclient/sdi_if.h"
+#else
+#include <sdiclient/sdi_if.h>
+#endif
+
 // ─── Estado do autômato ──────────────────────────────────────────────────────
 
 PPState  g_pp_state              = PPState::IDLE;
@@ -32,3 +38,9 @@ int  g_candidate_count           = 0;
 // ─── Sincronização ────────────────────────────────────────────────────────────
 
 std::mutex g_sdi_callback_mutex;
+
+// ─── Instâncias SDI globais ───────────────────────────────────────────────────
+// O SDI Server aceita uma única conexão lógica — instâncias são singletons.
+
+libsdi::CardDetection g_cardDetection;
+libsdi::PED           g_ped;

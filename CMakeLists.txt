@@ -33,24 +33,31 @@ endif()
 
 set(PPCOMP_SOURCES
     src/ppcomp_globals.cpp
-    # Adicionar conforme implementação avança:
-    # src/ppcomp_lifecycle.cpp
-    # src/ppcomp_callbacks.cpp
-    # src/ppcomp_mapping.cpp
-    # src/ppcomp_errors.cpp
-    # src/ppcomp_tables.cpp
-    # src/ppcomp_detection.cpp
-    # src/ppcomp_emv_ct.cpp
-    # src/ppcomp_emv_ctls.cpp
-    # src/ppcomp_pin.cpp
+    src/ppcomp_errors.cpp
+    src/ppcomp_mapping.cpp
+    src/ppcomp_callbacks.cpp
+    src/ppcomp_lifecycle.cpp
+    src/ppcomp_tables.cpp
+    src/ppcomp_detection.cpp
+    src/ppcomp_emv_ct.cpp
+    src/ppcomp_emv_ctls.cpp
+    src/ppcomp_pin.cpp
+    tables/table_loader.cpp
 )
 
 add_library(ppcomp SHARED ${PPCOMP_SOURCES})
 
 target_include_directories(ppcomp PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/tables
     ${CMAKE_SOURCE_DIR}/libs/include
 )
+
+# Em builds mock (x86_64 para testes), usar headers stub em vez do ADK real
+if(USE_SDI_MOCK)
+    target_include_directories(ppcomp PRIVATE ${CMAKE_SOURCE_DIR}/tests/mocks)
+    target_compile_definitions(ppcomp PRIVATE USE_SDI_MOCK=1)
+endif()
 
 # ─── Bibliotecas Verifone ADK ────────────────────────────────────────────────
 
