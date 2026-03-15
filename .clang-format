@@ -1,0 +1,11 @@
+BasedOnStyle: Google
+ColumnLimit: 100
+IndentWidth: 4
+PointerAlignment: Right
+AccessModifierOffset: -4
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+BraceWrapping:
+  AfterFunction: false
+  AfterClass: false
+SortIncludes: true
