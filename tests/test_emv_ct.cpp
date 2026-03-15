@@ -195,3 +195,62 @@ TEST_F(EMVCTTest, EndChip_Cancelled) {
 
     EXPECT_EQ(PP_OK, PP_EndChip(0, 1));
 }
+
+// ─── PP_SetAID ────────────────────────────────────────────────────────────────
+
+TEST_F(EMVCTTest, SetAID_Success) {
+    g_pp_state = PPState::EMV_CT_STARTED;
+
+    uint8_t aid[] = {0xA0, 0x00, 0x00, 0x00, 0x03, 0x10, 0x10};
+    EXPECT_CALL(emv, SDI_CT_SetSelectedApp(_, 7)).WillOnce(Return(EMV_ADK_OK));
+
+    EXPECT_EQ(PP_OK, PP_SetAID(0, aid, sizeof(aid)));
+}
+
+TEST_F(EMVCTTest, SetAID_NullAID) {
+    EXPECT_EQ(PP_ERR_PARAM, PP_SetAID(0, nullptr, 0));
+}
+
+TEST_F(EMVCTTest, SetAID_AIDTooLong) {
+    // AID máximo é 16 bytes (EMVCo)
+    uint8_t aid[17] = {};
+    EXPECT_EQ(PP_ERR_PARAM, PP_SetAID(0, aid, sizeof(aid)));
+}
+
+TEST_F(EMVCTTest, SetAID_SDIFails) {
+    g_pp_state = PPState::EMV_CT_STARTED;
+    uint8_t aid[] = {0xA0, 0x00, 0x00, 0x00, 0x04, 0x10, 0x10};
+    EXPECT_CALL(emv, SDI_CT_SetSelectedApp(_, 7)).WillOnce(Return(EMV_ADK_PARAM_ERROR));
+    EXPECT_EQ(PP_ERR_PARAM, PP_SetAID(0, aid, sizeof(aid)));
+}
+
+// ─── PP_GetCard ───────────────────────────────────────────────────────────────
+
+TEST_F(EMVCTTest, GetCard_Success) {
+    g_pp_state    = PPState::EMV_CT_OFFLINE;
+    g_current_tec = TEC_CHIP_CT;
+
+    // SDI_fetchTxnTags retorna dados mascarados de PAN e data de expiração
+    EXPECT_CALL(emv, SDI_fetchTxnTags(_, _, _, _)).WillOnce(Return(EMV_ADK_OK));
+
+    EXPECT_EQ(PP_OK, PP_GetCard(0, outBuf, &outLen));
+    // Não verificar conteúdo — PAN é mascarado pelo SDI (P2PE)
+}
+
+TEST_F(EMVCTTest, GetCard_WrongState) {
+    g_pp_state = PPState::IDLE;
+    EXPECT_EQ(PP_ERR_STATE, PP_GetCard(0, outBuf, &outLen));
+}
+
+TEST_F(EMVCTTest, GetCard_NullBuffer) {
+    g_pp_state    = PPState::EMV_CT_OFFLINE;
+    g_current_tec = TEC_CHIP_CT;
+    EXPECT_EQ(PP_ERR_BUFFER, PP_GetCard(0, nullptr, nullptr));
+}
+
+TEST_F(EMVCTTest, GetCard_SDIFails) {
+    g_pp_state    = PPState::EMV_CT_OFFLINE;
+    g_current_tec = TEC_CHIP_CT;
+    EXPECT_CALL(emv, SDI_fetchTxnTags(_, _, _, _)).WillOnce(Return(EMV_ADK_COMM_ERROR));
+    EXPECT_EQ(PP_ERR_PINPAD, PP_GetCard(0, outBuf, &outLen));
+}

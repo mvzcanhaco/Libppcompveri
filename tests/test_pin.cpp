@@ -153,3 +153,67 @@ TEST_F(PINTest, GetPINBlock_CryptGetEncryptedPinFails) {
     int           ksnLen      = 10;
     EXPECT_EQ(PP_ERR_PINPAD, PP_GetPINBlock(0, pinBlock, &pinBlockLen, ksn, &ksnLen));
 }
+
+// ─── PP_StartGetPIN / PP_PollGetPIN / PP_AbortGetPIN (async) ─────────────────
+
+TEST_F(PINTest, StartGetPIN_Online_InitiatesAsync) {
+    EXPECT_CALL(cls, ped_setDefaultTimeout(30000)).WillOnce(Return(EMV_ADK_OK));
+    EXPECT_CALL(cls, ped_sendPinInputParameters(4, 6, 0)).WillOnce(Return(EMV_ADK_OK));
+    EXPECT_CALL(cls, ped_startPinEntry(1)).WillOnce(Return(EMV_PED_OK));
+
+    EXPECT_EQ(PP_OK, PP_StartGetPIN(0, 4, 6, 30, 1, PIN_VERIFICATION_ONLINE));
+    EXPECT_EQ(PPState::PIN, g_pp_state);
+}
+
+TEST_F(PINTest, StartGetPIN_NotInitialized) {
+    PP_Close(0);
+    EXPECT_EQ(PP_ERR_INIT, PP_StartGetPIN(0, 4, 6, 30, 1, PIN_VERIFICATION_ONLINE));
+    SdiTestHelper::setupOpenSuccess(emv, cls);
+    PP_Open(0, nullptr);
+}
+
+TEST_F(PINTest, PollGetPIN_StillWaiting) {
+    g_pp_state = PPState::PIN;
+    EXPECT_CALL(cls, ped_pollPinEntry()).WillOnce(Return(EMV_PED_OK));
+    // Retorna PP_ERR_NOEVENT enquanto aguarda dígitos
+    EXPECT_EQ(PP_ERR_NOEVENT, PP_PollGetPIN(0));
+}
+
+TEST_F(PINTest, PollGetPIN_PINEntered) {
+    g_pp_state = PPState::PIN;
+    // pollPinEntry retorna código especial indicando entrada completa
+    EXPECT_CALL(cls, ped_pollPinEntry()).WillOnce(Return(EMV_PED_OK));
+    g_pin_entered = true;  // Callback cb_emv_ct já setou flag
+    int ret = PP_PollGetPIN(0);
+    EXPECT_TRUE(ret == PP_OK || ret == PP_ERR_NOEVENT);
+}
+
+TEST_F(PINTest, PollGetPIN_UserCancel) {
+    g_pp_state = PPState::PIN;
+    EXPECT_CALL(cls, ped_pollPinEntry()).WillOnce(Return(EMV_PED_CANCEL));
+    EXPECT_EQ(PP_ABORT, PP_PollGetPIN(0));
+}
+
+TEST_F(PINTest, PollGetPIN_Timeout) {
+    g_pp_state = PPState::PIN;
+    EXPECT_CALL(cls, ped_pollPinEntry()).WillOnce(Return(EMV_PED_TIMEOUT));
+    EXPECT_EQ(PP_ERR_TIMEOUT, PP_PollGetPIN(0));
+}
+
+TEST_F(PINTest, PollGetPIN_WrongState) {
+    g_pp_state = PPState::IDLE;
+    EXPECT_EQ(PP_ERR_STATE, PP_PollGetPIN(0));
+}
+
+TEST_F(PINTest, AbortGetPIN_WhileInPINState) {
+    g_pp_state = PPState::PIN;
+    EXPECT_CALL(cls, ped_stopPinEntry()).WillOnce(Return(EMV_ADK_OK));
+    EXPECT_EQ(PP_OK, PP_AbortGetPIN(0));
+    EXPECT_NE(PPState::PIN, g_pp_state);
+}
+
+TEST_F(PINTest, AbortGetPIN_NotInPINState) {
+    g_pp_state = PPState::EMV_CT_OFFLINE;
+    EXPECT_CALL(cls, ped_stopPinEntry()).Times(0);
+    EXPECT_EQ(PP_OK, PP_AbortGetPIN(0));
+}

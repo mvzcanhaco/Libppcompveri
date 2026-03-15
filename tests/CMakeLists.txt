@@ -38,3 +38,7 @@ add_ppcomp_test(test_pin         test_pin.cpp         mocks/sdi_mock.cpp)
 add_ppcomp_test(test_detection   test_detection.cpp   mocks/sdi_mock.cpp)
 add_ppcomp_test(test_emv_ctls    test_emv_ctls.cpp    mocks/sdi_mock.cpp)
 add_ppcomp_test(test_callbacks   test_callbacks.cpp   mocks/sdi_mock.cpp)
+
+# ─── Testes de integração ─────────────────────────────────────────────────────
+
+add_subdirectory(integration)
