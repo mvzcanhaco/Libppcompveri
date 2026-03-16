@@ -227,8 +227,8 @@ TEST_F(EMVCTTest, SetAID_SDIFails) {
 // ─── PP_GetCard ───────────────────────────────────────────────────────────────
 
 TEST_F(EMVCTTest, GetCard_Success) {
-    g_pp_state    = PPState::EMV_CT_OFFLINE;
-    g_current_tec = TEC_CHIP_CT;
+    g_pp_state    = PPState::CARD_MSR;
+    g_current_tec = TEC_MSR;
 
     // SDI_fetchTxnTags retorna dados mascarados de PAN e data de expiração
     EXPECT_CALL(emv, SDI_fetchTxnTags(_, _, _, _)).WillOnce(Return(EMV_ADK_OK));
@@ -243,8 +243,8 @@ TEST_F(EMVCTTest, GetCard_WrongState) {
 }
 
 TEST_F(EMVCTTest, GetCard_NullBuffer) {
-    g_pp_state    = PPState::EMV_CT_OFFLINE;
-    g_current_tec = TEC_CHIP_CT;
+    g_pp_state    = PPState::CARD_MSR;
+    g_current_tec = TEC_MSR;
     EXPECT_EQ(PP_ERR_BUFFER, PP_GetCard(0, nullptr, nullptr));
 }
 

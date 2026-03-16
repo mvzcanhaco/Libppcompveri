@@ -174,8 +174,8 @@ TEST_F(PINTest, StartGetPIN_NotInitialized) {
 
 TEST_F(PINTest, PollGetPIN_StillWaiting) {
     g_pp_state = PPState::PIN;
-    EXPECT_CALL(cls, ped_pollPinEntry()).WillOnce(Return(EMV_PED_OK));
-    // Retorna PP_ERR_NOEVENT enquanto aguarda dígitos
+    // Valor 5 não mapeado (default) → PP_ERR_NOEVENT (ainda digitando)
+    EXPECT_CALL(cls, ped_pollPinEntry()).WillOnce(Return(5));
     EXPECT_EQ(PP_ERR_NOEVENT, PP_PollGetPIN(0));
 }
 

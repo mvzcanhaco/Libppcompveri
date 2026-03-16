@@ -12,11 +12,11 @@
 using ::testing::Return;
 using ::testing::_;
 
-// Declarações das funções de callback (linkadas via ppcomp.a)
+// Declarações das funções de callback com assinaturas reais (linkadas via ppcomp.a)
 extern "C" {
-    int cb_emv_ct(int event, void* data, int dataLen, void* outData, int* outLen);
-    int cb_emv_ctls(int event, void* data, int dataLen, void* outData, int* outLen);
-    void cb_sdi_status(int event, int value);
+    EMV_ADK_INFO cb_emv_ct(uint8_t* data, uint32_t len);
+    EMV_ADK_INFO cb_emv_ctls(uint8_t* data, uint32_t len);
+    void cb_sdi_status(uint8_t* data, uint32_t len);
 }
 
 class CallbackTest : public ::testing::Test {
@@ -50,54 +50,53 @@ protected:
 
 TEST_F(CallbackTest, CbEmvCT_OnlinePIN_SetsGlobalFlag) {
     // Simular callback ONLINE_PIN — deve setar g_pin_requested
-    int outLen = 0;
-    int ret = cb_emv_ct(EMV_CB_ONLINE_PIN, nullptr, 0, nullptr, &outLen);
+    uint8_t data[] = {EMV_CB_ONLINE_PIN};
+    EMV_ADK_INFO ret = cb_emv_ct(data, sizeof(data));
     EXPECT_EQ(EMV_ADK_OK, ret);
     EXPECT_TRUE(g_pin_requested);
 }
 
 TEST_F(CallbackTest, CbEmvCT_WrongPIN_IncrementsRetryCount) {
     g_pin_retry_count = 0;
-    int outLen = 0;
-    int ret = cb_emv_ct(EMV_CB_WRONG_PIN, nullptr, 0, nullptr, &outLen);
+    uint8_t data[] = {EMV_CB_WRONG_PIN};
+    EMV_ADK_INFO ret = cb_emv_ct(data, sizeof(data));
     EXPECT_EQ(EMV_ADK_OK, ret);
     EXPECT_EQ(1, g_pin_retry_count);
 }
 
 TEST_F(CallbackTest, CbEmvCT_WrongPIN_MultipleRetries) {
     g_pin_retry_count = 1;
-    int outLen = 0;
-    cb_emv_ct(EMV_CB_WRONG_PIN, nullptr, 0, nullptr, &outLen);
+    uint8_t data[] = {EMV_CB_WRONG_PIN};
+    cb_emv_ct(data, sizeof(data));
     EXPECT_EQ(2, g_pin_retry_count);
 }
 
 TEST_F(CallbackTest, CbEmvCT_PINBlocked_SetsPINBlockedFlag) {
     g_pin_blocked = false;
-    int outLen = 0;
-    int ret = cb_emv_ct(EMV_CB_PIN_BLOCKED, nullptr, 0, nullptr, &outLen);
+    uint8_t data[] = {EMV_CB_PIN_BLOCKED};
+    EMV_ADK_INFO ret = cb_emv_ct(data, sizeof(data));
     EXPECT_EQ(EMV_ADK_OK, ret);
     EXPECT_TRUE(g_pin_blocked);
 }
 
 TEST_F(CallbackTest, CbEmvCT_ScriptResult_StoredCorrectly) {
-    uint8_t scriptData[] = {0x01, 0x02, 0x03, 0x04};
-    int outLen = 0;
-    int ret = cb_emv_ct(EMV_CB_SCRIPT_RESULT, scriptData, sizeof(scriptData), nullptr, &outLen);
+    uint8_t data[] = {EMV_CB_SCRIPT_RESULT, 0x01, 0x02, 0x03, 0x04};
+    EMV_ADK_INFO ret = cb_emv_ct(data, sizeof(data));
     EXPECT_EQ(EMV_ADK_OK, ret);
     // Script result deve ser armazenado internamente (não verificamos conteúdo aqui)
 }
 
 TEST_F(CallbackTest, CbEmvCT_SelectApp_ReturnsOK) {
     // Sem candidatos — deve retornar OK sem crash
-    int outLen = 0;
-    int ret = cb_emv_ct(EMV_CB_SELECT_APP, nullptr, 0, nullptr, &outLen);
+    uint8_t data[] = {EMV_CB_SELECT_APP};
+    EMV_ADK_INFO ret = cb_emv_ct(data, sizeof(data));
     EXPECT_EQ(EMV_ADK_OK, ret);
 }
 
 TEST_F(CallbackTest, CbEmvCT_UnknownEvent_ReturnsOK) {
     // Eventos desconhecidos devem ser ignorados silenciosamente
-    int outLen = 0;
-    int ret = cb_emv_ct(0xFF, nullptr, 0, nullptr, &outLen);
+    uint8_t data[] = {0xFF};
+    EMV_ADK_INFO ret = cb_emv_ct(data, sizeof(data));
     EXPECT_EQ(EMV_ADK_OK, ret);
 }
 
@@ -105,42 +104,47 @@ TEST_F(CallbackTest, CbEmvCT_UnknownEvent_ReturnsOK) {
 
 TEST_F(CallbackTest, CbEmvCTLS_OnlinePIN_SetsGlobalFlag) {
     g_pin_requested = false;
-    int outLen = 0;
-    int ret = cb_emv_ctls(EMV_CB_ONLINE_PIN, nullptr, 0, nullptr, &outLen);
+    uint8_t data[] = {EMV_CTLS_CB_ONLINE_PIN};
+    EMV_ADK_INFO ret = cb_emv_ctls(data, sizeof(data));
     EXPECT_EQ(EMV_ADK_OK, ret);
     EXPECT_TRUE(g_pin_requested);
 }
 
 TEST_F(CallbackTest, CbEmvCTLS_SelectKernel_ReturnsOK) {
-    int outLen = 0;
-    int ret = cb_emv_ctls(EMV_CTLS_CB_SELECT_KERNEL, nullptr, 0, nullptr, &outLen);
+    uint8_t data[] = {EMV_CTLS_CB_SELECT_KERNEL};
+    EMV_ADK_INFO ret = cb_emv_ctls(data, sizeof(data));
     EXPECT_EQ(EMV_ADK_OK, ret);
 }
 
 TEST_F(CallbackTest, CbEmvCTLS_UnknownEvent_ReturnsOK) {
-    int outLen = 0;
-    int ret = cb_emv_ctls(0xFF, nullptr, 0, nullptr, &outLen);
+    uint8_t data[] = {0xFF};
+    EMV_ADK_INFO ret = cb_emv_ctls(data, sizeof(data));
     EXPECT_EQ(EMV_ADK_OK, ret);
 }
 
 // ─── cb_sdi_status ───────────────────────────────────────────────────────────
+// cb_sdi_status recebe data[0]=statusType, data[1]=statusValue
+// statusType=0x01 → PIN digit count update
 
 TEST_F(CallbackTest, CbSdiStatus_PinDigitEntered_UpdatesCount) {
     g_pin_digit_count = 0;
-    cb_sdi_status(SDI_STATUS_PIN_DIGIT, 3);
+    uint8_t data[] = {0x01, 3};  // statusType=PIN_DIGIT(0x01), count=3
+    cb_sdi_status(data, sizeof(data));
     EXPECT_EQ(3, g_pin_digit_count);
     // NUNCA logar o dígito real — apenas a contagem
 }
 
 TEST_F(CallbackTest, CbSdiStatus_PinDigitZero_ClearsCount) {
     g_pin_digit_count = 4;
-    cb_sdi_status(SDI_STATUS_PIN_DIGIT, 0);
+    uint8_t data[] = {0x01, 0};  // statusType=PIN_DIGIT(0x01), count=0
+    cb_sdi_status(data, sizeof(data));
     EXPECT_EQ(0, g_pin_digit_count);
 }
 
 TEST_F(CallbackTest, CbSdiStatus_UnknownEvent_NoSideEffect) {
     g_pin_digit_count = 2;
-    cb_sdi_status(0xFF, 99);
+    uint8_t data[] = {0xFF, 99};
+    cb_sdi_status(data, sizeof(data));
     EXPECT_EQ(2, g_pin_digit_count);  // Não deve alterar estado
 }
 
@@ -149,8 +153,8 @@ TEST_F(CallbackTest, CbSdiStatus_UnknownEvent_NoSideEffect) {
 TEST_F(CallbackTest, CbEmvCT_MutexProtected_NoCrashUnderLoad) {
     // Chama callback várias vezes para verificar que o mutex não causa deadlock
     for (int i = 0; i < 100; i++) {
-        int outLen = 0;
-        cb_emv_ct(EMV_CB_WRONG_PIN, nullptr, 0, nullptr, &outLen);
+        uint8_t data[] = {EMV_CB_WRONG_PIN};
+        cb_emv_ct(data, sizeof(data));
     }
     EXPECT_EQ(100, g_pin_retry_count);
 }

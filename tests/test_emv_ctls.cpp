@@ -51,33 +51,33 @@ TEST_F(EMVCTLSTest, GoOnChipCTLS_Success) {
         .WillOnce(Return(EMV_ADK_OK));
     EXPECT_CALL(cls, dialog_requestCard(_, _)).WillOnce(Return(EMV_ADK_OK));
 
-    EXPECT_EQ(PP_CTLS_WAITING, PP_GoOnChipCTLS(0, 10000, 0, 0, 1, outBuf, &outLen));
-    EXPECT_EQ(PPState::EMV_CTLS_SETUP, g_pp_state);
+    EXPECT_EQ(PP_CTLS_WAITING, PP_GoOnChipCTLS(0, 10000, 0, 0, outBuf, &outLen));
+    EXPECT_EQ(PPState::EMV_CTLS_POLLING, g_pp_state);
 }
 
 TEST_F(EMVCTLSTest, GoOnChipCTLS_WrongTechnology) {
     g_current_tec = TEC_CHIP_CT;
-    EXPECT_EQ(PP_ERR_NOTCHIP, PP_GoOnChipCTLS(0, 10000, 0, 0, 1, outBuf, &outLen));
+    EXPECT_EQ(PP_ERR_NOTCHIP, PP_GoOnChipCTLS(0, 10000, 0, 0, outBuf, &outLen));
 }
 
 TEST_F(EMVCTLSTest, GoOnChipCTLS_TablesNotLoaded) {
     g_tables_loaded = false;
-    EXPECT_EQ(PP_ERR_STATE, PP_GoOnChipCTLS(0, 10000, 0, 0, 1, outBuf, &outLen));
+    EXPECT_EQ(PP_ERR_STATE, PP_GoOnChipCTLS(0, 10000, 0, 0, outBuf, &outLen));
 }
 
 TEST_F(EMVCTLSTest, GoOnChipCTLS_WrongState) {
     g_pp_state = PPState::IDLE;
-    EXPECT_EQ(PP_ERR_STATE, PP_GoOnChipCTLS(0, 10000, 0, 0, 1, outBuf, &outLen));
+    EXPECT_EQ(PP_ERR_STATE, PP_GoOnChipCTLS(0, 10000, 0, 0, outBuf, &outLen));
 }
 
 TEST_F(EMVCTLSTest, GoOnChipCTLS_SDIFails) {
     EXPECT_CALL(emv, SDI_CTLS_SetupTransaction(_, _, _, _, _))
         .WillOnce(Return(EMV_ADK_COMM_ERROR));
-    EXPECT_EQ(PP_ERR_PINPAD, PP_GoOnChipCTLS(0, 10000, 0, 0, 1, outBuf, &outLen));
+    EXPECT_EQ(PP_ERR_PINPAD, PP_GoOnChipCTLS(0, 10000, 0, 0, outBuf, &outLen));
 }
 
 TEST_F(EMVCTLSTest, GoOnChipCTLS_NullBuffer) {
-    EXPECT_EQ(PP_ERR_BUFFER, PP_GoOnChipCTLS(0, 10000, 0, 0, 1, nullptr, nullptr));
+    EXPECT_EQ(PP_ERR_BUFFER, PP_GoOnChipCTLS(0, 10000, 0, 0, nullptr, nullptr));
 }
 
 // ─── PP_PollCTLS ──────────────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ TEST_F(EMVCTLSTest, PollCTLS_OfflineApproval) {
         .WillOnce(DoAll(SetArgPointee<1>(tr), Return(EMV_ADK_OFFLINE_APPROVE)));
 
     EXPECT_EQ(PP_OFFLINE_APPROVE, PP_PollCTLS(0, outBuf, &outLen));
-    EXPECT_EQ(PPState::EMV_CTLS_SETUP, g_pp_state);
+    EXPECT_EQ(PPState::IDLE, g_pp_state);
     EXPECT_GT(outLen, 0);
 }
 
@@ -133,7 +133,6 @@ TEST_F(EMVCTLSTest, PollCTLS_Fallback) {
     EXPECT_CALL(emv, SDI_CTLS_ContinueOffline(_, _, _))
         .WillOnce(Return(EMV_ADK_FALLBACK));
     EXPECT_CALL(emv, SDI_CTLS_Break()).WillOnce(Return(EMV_ADK_OK));
-    EXPECT_CALL(emv, SDI_CTLS_EndTransaction(_)).WillOnce(Return(EMV_ADK_OK));
 
     EXPECT_EQ(PP_FALLBACK_CT, PP_PollCTLS(0, outBuf, &outLen));
 }
@@ -144,6 +143,7 @@ TEST_F(EMVCTLSTest, PollCTLS_MobileSecondTap) {
     EMV_CTLS_TRANSRES_STRUCT tr = {};
     EXPECT_CALL(emv, SDI_CTLS_ContinueOffline(_, _, _))
         .WillOnce(DoAll(SetArgPointee<1>(tr), Return(EMV_ADK_TXN_CTLS_MOBILE)));
+    EXPECT_CALL(cls, dialog_requestCard(_, _)).WillOnce(Return(EMV_ADK_OK));
 
     EXPECT_EQ(PP_CTLS_WAITING, PP_PollCTLS(0, outBuf, &outLen));
     // Estado volta a aguardar segundo tap
@@ -163,7 +163,7 @@ TEST_F(EMVCTLSTest, PollCTLS_NullBuffer) {
 // ─── PP_FinishChipCTLS ───────────────────────────────────────────────────────
 
 TEST_F(EMVCTLSTest, FinishChipCTLS_OnlineApproval) {
-    g_pp_state = PPState::EMV_CTLS_SETUP;
+    g_pp_state = PPState::EMV_CTLS_POLLING;
 
     uint8_t arpc[] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07};
     EMV_CTLS_TRANSRES_STRUCT tr = {};
@@ -171,14 +171,13 @@ TEST_F(EMVCTLSTest, FinishChipCTLS_OnlineApproval) {
 
     EXPECT_CALL(emv, SDI_CTLS_ContinueOnline(_, 8, _, _))
         .WillOnce(DoAll(SetArgPointee<2>(tr), Return(EMV_ADK_OFFLINE_APPROVE)));
-    EXPECT_CALL(emv, SDI_fetchTxnTags(_, _, _, _)).WillOnce(Return(EMV_ADK_OK));
 
     EXPECT_EQ(PP_OFFLINE_APPROVE,
               PP_FinishChipCTLS(0, reinterpret_cast<char*>(arpc), 8, nullptr, 0, outBuf, &outLen));
 }
 
 TEST_F(EMVCTLSTest, FinishChipCTLS_OnlineDecline) {
-    g_pp_state = PPState::EMV_CTLS_SETUP;
+    g_pp_state = PPState::EMV_CTLS_POLLING;
 
     uint8_t arpc[] = {0x00, 0x01};
     EMV_CTLS_TRANSRES_STRUCT tr = {};
@@ -186,7 +185,6 @@ TEST_F(EMVCTLSTest, FinishChipCTLS_OnlineDecline) {
 
     EXPECT_CALL(emv, SDI_CTLS_ContinueOnline(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<2>(tr), Return(EMV_ADK_DECLINE)));
-    EXPECT_CALL(emv, SDI_fetchTxnTags(_, _, _, _)).WillOnce(Return(EMV_ADK_OK));
 
     EXPECT_EQ(PP_OFFLINE_DECLINE,
               PP_FinishChipCTLS(0, reinterpret_cast<char*>(arpc), 2, nullptr, 0, outBuf, &outLen));
@@ -200,7 +198,6 @@ TEST_F(EMVCTLSTest, AbortCTLS_WhilePolling) {
 
     EXPECT_CALL(emv, SDI_CTLS_Break()).WillOnce(Return(EMV_ADK_OK));
     EXPECT_CALL(emv, SDI_CTLS_EndTransaction(_)).WillOnce(Return(EMV_ADK_OK));
-    EXPECT_CALL(cls, SDI_waitCardRemoval(30)).WillOnce(Return(EMV_ADK_OK));
 
     EXPECT_EQ(PP_OK, PP_AbortCTLS(0));
     EXPECT_EQ(PPState::IDLE, g_pp_state);
