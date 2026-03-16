@@ -1,0 +1,22 @@
+// settings.gradle
+// Configurações do projeto Android para libppcomp.
+
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "libppcomp"
+include ':libppcomp'
+project(':libppcomp').projectDir = new File('.')

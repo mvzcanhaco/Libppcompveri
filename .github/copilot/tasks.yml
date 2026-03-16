@@ -1,0 +1,555 @@
+version: 1
+tasks:
+  # ──────────────────────────────────────────────────────────────────────────
+  # TASK 1 — Scaffolding e headers
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: "scaffold-headers"
+    description: |
+      Criar todos os headers C++ do projeto libppcomp.
+
+      Gerar os seguintes arquivos em include/:
+        1. ppcomp_internal.h  — constantes PP_*, enum PPState, macros de log,
+           variáveis globais extern, tipos internos (ABECS_TERMDATA_STRUCT,
+           ABECS_AID_RECORD, ABECS_CAPK_RECORD, ABECS_TRANSRESULT,
+           ABECS_MSR_DATA, ABECS_CTLS_PARAMS)
+        2. pp_sdi_bridge.h    — declarações de todas as funções de mapeamento:
+           mapEmvRetToAbecs(), mapTxnTypeAbecsToEmv(), mapModalidadeToTec(),
+           pp_serialize_trans_result(), pp_serialize_ctls_result(),
+           pp_serialize_start_result(), pp_serialize_msr_abecs(),
+           pp_parse_tlv_to_msr(), pp_abecs_serialize(), pp_extract_ksn_from_inventory(),
+           pp_tlv_get_byte(), pp_tlv_get_bytes(), pp_save_script_result()
+
+      Requisitos:
+      - Include guards com #pragma once
+      - Todos os tipos com tamanhos fixos (uint8_t, uint32_t — <cstdint>)
+      - Zero dependências externas nos headers (apenas stdlib C)
+      - Documentação Doxygen em cada struct e função
+      - ABECS_AID_RECORD deve ter campos separados para CT e CTLS
+      - Macros de log devem usar __android_log_print internamente mas nunca
+        logar dados sensíveis (PAN, PIN, chaves) — comentário explícito no código
+    files:
+      - include/ppcomp_internal.h
+      - include/pp_sdi_bridge.h
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # TASK 2 — Lifecycle (PP_Open / PP_Close / PP_Reset / PP_GetInfo)
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: "implement-lifecycle"
+    description: |
+      Implementar src/ppcomp_lifecycle.cpp com as funções de ciclo de vida.
+
+      Funções a implementar:
+        int PP_Open(int portaFisica, char* parametros)
+        int PP_Close(int idPP)
+        int PP_Reset(int idPP)
+        int PP_GetInfo(int idPP, int tipo, char* buffer, int tamBuffer)
+        int PP_Abort(int idPP)
+
+      PP_Open deve:
+      1. Conectar ao SDI Server via SDI_ProtocolInit com JSON:
+         {"server":{"host":"127.0.0.1","port":12000}}
+      2. Chamar SDI_CT_Init_Framework com callback pp_emv_callback_ct
+      3. Chamar SDI_CTLS_Init_Framework com callback pp_emv_callback_ctls
+      4. Registrar SDI_SetSdiCallback para callbacks de status/PIN/remoção
+      5. Setar g_initialized = true e g_pp_state = PP_STATE_IDLE
+      6. Retornar PP_OK ou PP_ERR_INIT com log do erro específico
+
+      PP_Abort deve tratar TODOS os estados de g_pp_state:
+      - PP_STATE_DETECTING    → CardDetection::stopSelection()
+      - PP_STATE_EMV_CT_*     → SDI_CT_EndTransaction(EMV_ADK_TXN_ABORT)
+      - PP_STATE_EMV_CTLS_*   → SDI_CTLS_Break() + EndTransaction
+      - PP_STATE_PIN          → g_ped.stopPinEntry()
+      Após abort: libsdi::SDI::waitCardRemoval(5), resetar estado
+
+      Incluir testes unitários em tests/test_lifecycle.cpp usando Google Test.
+      Mock do SDI_ProtocolInit para testes offline.
+    files:
+      - src/ppcomp_lifecycle.cpp
+      - tests/test_lifecycle.cpp
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # TASK 3 — Carga de tabelas ABECS
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: "implement-tables"
+    description: |
+      Implementar src/ppcomp_tables.cpp — o passo mais crítico do projeto.
+
+      Funções a implementar:
+        int PP_SetTermData(ABECS_TERMDATA_STRUCT* abecs)
+        int PP_LoadAIDTable(ABECS_AID_RECORD* aids, int count)
+        int PP_LoadCAPKTable(ABECS_CAPK_RECORD* keys, int count)
+        int PP_LoadCTLSParams(ABECS_CTLS_PARAMS* params)
+        int PP_ApplyTables()   // chama CT/CTLS_ApplyConfiguration
+
+      Regras críticas de implementação:
+
+      PP_LoadAIDTable:
+      - Primeiro AID: passar flag EMV_ADK_CLEAR_ALL_RECORDS para limpar config
+        anterior antes de carregar a nova
+      - Cada AID com ctls_supported=true deve ser carregado TAMBÉM via
+        SDI_CTLS_SetAppliDataSchemeSpecific com o kernel_id correto:
+        2=Mastercard(MK), 3=Visa(VK), 4=Amex(AK), 6=Discover(DK), 7=Elo(EK)
+      - TACs: sempre 5 bytes — denial, online, default
+      - Se AID sem TAC definido: usar valores default conservadores (todos FF)
+
+      PP_LoadCAPKTable:
+      - Mesmo padrão CLEAR_ALL_RECORDS no primeiro key
+      - Carregar em CT E CTLS (mesma estrutura, mesmos dados)
+      - Após último key: OBRIGATÓRIO chamar SDI_CT_ApplyConfiguration()
+        e SDI_CTLS_ApplyConfiguration() — sem isso o SDI ignora tudo
+
+      PP_SetTermData:
+      - Hardcodar BRL: código=0x0986, expoente=2
+      - Hardcodar Brasil: código=0x0076
+      - Mapear T1_TERMTYPE, T1_TERMCAP(3b), T1_ADDTERMCAP(5b)
+      - Para CTLS: incluir limites T1_CTLSFLOORLIMIT, T1_CTLSTXNLIMIT,
+        T1_CTLSNOPIN_LIMIT
+
+      Incluir:
+      - tables/table_loader.cpp: parser de formato binário ABECS
+      - tests/test_tables.cpp: testes com tabelas reais de homologação
+        (fixtures em tests/fixtures/aids_homologacao.bin,
+         tests/fixtures/capks_homologacao.bin)
+    files:
+      - src/ppcomp_tables.cpp
+      - tables/table_loader.cpp
+      - tables/table_loader.h
+      - tests/test_tables.cpp
+      - tests/fixtures/.gitkeep
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # TASK 4 — Detecção de tecnologia de cartão
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: "implement-detection"
+    description: |
+      Implementar src/ppcomp_detection.cpp — Technology Selection.
+
+      Funções a implementar:
+        int PP_StartCheckEvent(int idPP, int modalidades, int timeout, int podeCancelar)
+        int PP_CheckEvent(int idPP, int* tecnologia, char* dadosCartao, int* tamDados)
+        int PP_AbortCheckEvent(int idPP)
+
+      PP_StartCheckEvent:
+      - Mapear bitmask ABECS modalidades → bitmask SDI techs:
+        ABECS_CHIP_CT   → TEC_CHIP_CT
+        ABECS_CHIP_CTLS → TEC_CTLS
+        ABECS_MSR       → TEC_MSR
+      - Usar DETECTION_MODE_BLOCKING (compatível com modelo poll da libclisitef)
+      - Setar opções CT: EMV_CT_TRY_PPS | EMV_CT_DETECT_WRONG_ATR
+      - Setar g_pp_state = PP_STATE_DETECTING
+      - Setar g_detection_active = true
+
+      PP_CheckEvent:
+      - Chamar g_cardDetection.pollTechnology()
+      - TEC_NONE       → retornar PP_ERR_NOEVENT (sem evento ainda)
+      - TEC_CHIP_CT    → setar g_current_tec, retornar PP_OK com ABECS_CHIP_CT
+      - TEC_CTLS       → setar g_current_tec, retornar PP_OK com ABECS_CHIP_CTLS
+      - TEC_MSR        → chamar pp_extract_msr_data(), retornar dados de tarja
+      - Timeout interno → retornar PP_ERR_TIMEOUT
+
+      Para MSR no PP_CheckEvent:
+      - Chamar SDI_fetchTxnTags com tags MSR: 0x57, 0x5A, 0x5F20, 0x5F24,
+        0x9F6B, 0xDFAB20(track1enc), 0xDFAB21(track2enc), 0xDFAB22(KSN)
+      - Dados chegam CIFRADOS (P2PE) — não tentar decifrar
+      - Serializar em formato ABECS MSR data no outBuf
+      - Após MSR: setar g_pp_state = PP_STATE_CARD_MSR
+
+      Incluir tests/test_detection.cpp
+    files:
+      - src/ppcomp_detection.cpp
+      - tests/test_detection.cpp
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # TASK 5 — EMV Contato (chip)
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: "implement-emv-ct"
+    description: |
+      Implementar src/ppcomp_emv_ct.cpp — fluxo completo EMV Chip Contact.
+
+      Funções a implementar:
+        int PP_GoOnChip(int idPP, long amount, int cashback, int txnType,
+                        char* outBuf, int* outLen)
+        int PP_SetAID(int idPP, char* aid, int aidLen)  // após PP_MULTIAPP
+        int PP_GoOnChipContinue(int idPP, char* inBuf, int inLen,
+                                char* outBuf, int* outLen)
+        int PP_FinishChip(int idPP, char* arpc, int arpcLen,
+                          char* scripts, int scriptsLen,
+                          char* outBuf, int* outLen)
+        int PP_UpdateTags(int idPP, char* tlvData, int tlvLen)
+        int PP_EndChip(int idPP, int resultado)
+
+      PP_GoOnChip:
+      1. Verificar g_current_tec == TEC_CHIP_CT, senão PP_ERR_NOTCHIP
+      2. Setar g_pp_state = PP_STATE_EMV_CT_STARTED
+      3. Mapear txnType ABECS → EMV: compra=0x00, saque=0x01, cashback=0x09,
+         estorno=0x20, consulta=0x31, pré-autorização=0x30
+      4. Chamar SDI_CT_StartTransaction(amount_centavos, cashback, 986, emvType, &startResult)
+      5. Se EMV_ADK_MULTI_APP: serializar lista candidatos, retornar PP_MULTIAPP
+      6. Se EMV_ADK_OK/SEL_APP_OK: serializar startResult, retornar PP_OK
+
+      PP_GoOnChipContinue:
+      1. Setar g_pp_state = PP_STATE_EMV_CT_OFFLINE
+      2. Chamar SDI_CT_ContinueOffline(0, &transResult, &sdiExtra)
+      3. Mapear resultado:
+         EMV_ADK_OK       → PP_OFFLINE_APPROVE (TC)
+         EMV_ADK_GO_ONLINE/ONLINE → PP_GO_ONLINE (ARQC)
+         EMV_ADK_DECLINE  → PP_OFFLINE_DECLINE (AAC)
+      4. Serializar transResult + sdiExtra → outBuf com:
+         - cryptogram (8 bytes), cryptogram_type, ATC (2 bytes),
+         - TVR (5 bytes), TSI (2 bytes), IAD, PAN ofuscado
+
+      PP_FinishChip:
+      1. Setar g_pp_state = PP_STATE_EMV_CT_ONLINE
+      2. Chamar SDI_CT_ContinueOnline(arpc, arpcLen, scripts, scriptsLen,
+                                       &transResult, &sdiExtra)
+      3. Chamar SDI_fetchTxnTags com COMPROVANTE_TAGS (definido no copilot-instructions)
+      4. Serializar resultado completo para comprovante
+      5. Se scripts presentes: incluir resultado dos scripts no output
+
+      PP_EndChip:
+      - SDI_CT_EndTransaction(options)
+      - libsdi::SDI::waitCardRemoval(30)
+      - Resetar g_pp_state = PP_STATE_IDLE, g_current_tec = TEC_NONE
+
+      Incluir tests/test_emv_ct.cpp com cenários:
+      - Aprovação offline completa
+      - Aprovação online completa
+      - Declinado online
+      - Múltiplos AIDs
+      - Fallback (cartão com chip inoperante)
+    files:
+      - src/ppcomp_emv_ct.cpp
+      - tests/test_emv_ct.cpp
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # TASK 6 — EMV Contactless (NFC/CTLS)
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: "implement-emv-ctls"
+    description: |
+      Implementar src/ppcomp_emv_ctls.cpp — fluxo EMV Contactless.
+
+      DIFERENÇAS CRÍTICAS do fluxo CT:
+      - NÃO há seleção de AID explícita — o kernel faz internamente
+      - SetupTransaction NÃO bloqueia — ativa polling RF e retorna imediatamente
+      - ContinueOffline retorna EMV_ADK_NO_CARD enquanto aguarda toque
+      - Maioria das transações CTLS é offline puro (sem ContinueOnline)
+      - Fallback para chip CT é um caminho esperado e comum
+
+      Funções a implementar:
+        int PP_GoOnChipCTLS(int idPP, long amount, int txnType,
+                            char* outBuf, int* outLen)
+        int PP_PollCTLS(int idPP, char* outBuf, int* outLen)
+        int PP_FinishChipCTLS(int idPP, char* arpc, int arpcLen,
+                              char* outBuf, int* outLen)
+        int PP_AbortCTLS(int idPP)
+
+      PP_GoOnChipCTLS:
+      1. Verificar g_current_tec == TEC_CTLS
+      2. Setar g_pp_state = PP_STATE_EMV_CTLS_SETUP
+      3. SDI_CTLS_SetupTransaction(amount, 0, 986, emvTxnType, &setupResult)
+      4. Exibir mensagem via libsdi::Dialog::requestCard("Aproxime o cartão", 30000)
+      5. Setar g_pp_state = PP_STATE_EMV_CTLS_POLLING
+      6. Retornar PP_CTLS_WAITING
+
+      PP_PollCTLS (chamado em loop pela libclisitef):
+      - SDI_CTLS_ContinueOffline(0, &transResult, &sdiExtra)
+      - EMV_ADK_NO_CARD          → PP_ERR_NOEVENT (continuar polling)
+      - EMV_ADK_OK               → PP_OFFLINE_APPROVE
+      - EMV_ADK_GO_ONLINE        → PP_GO_ONLINE
+      - EMV_ADK_DECLINE          → PP_OFFLINE_DECLINE
+      - EMV_ADK_TXN_CTLS_MOBILE  → PP_CTLS_WAITING (segundo toque mobile)
+      - EMV_ADK_FALLBACK         → SDI_CTLS_Break() + PP_FALLBACK_CT
+      - Outros erros             → mapEmvRetToAbecs()
+
+      PP_AbortCTLS:
+      - SDI_CTLS_Break()
+      - SDI_CTLS_EndTransaction(EMV_ADK_TXN_ABORT)
+      - Resetar estado
+
+      Incluir tests/test_emv_ctls.cpp com cenários:
+      - Toque único offline aprovado
+      - Toque mobile (wallet) — segundo toque
+      - Fallback para CT
+      - Timeout sem toque
+      - Online CTLS (raro mas possível)
+    files:
+      - src/ppcomp_emv_ctls.cpp
+      - tests/test_emv_ctls.cpp
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # TASK 7 — PIN Entry (PED)
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: "implement-pin"
+    description: |
+      Implementar src/ppcomp_pin.cpp — entrada de PIN segura.
+
+      Contexto de segurança: O PED do V660P-A é um enclave seguro.
+      A libppcomp NUNCA recebe o PIN em claro. O PIN block sai já
+      criptografado via DUKPT de libsdi::SdiCrypt::getEncryptedPin().
+
+      Funções a implementar:
+        int PP_GetPIN(int idPP, int minDig, int maxDig, int timeout,
+                      int podeCancelar, int tipoVerif)
+        int PP_StartGetPIN(int idPP, int minDig, int maxDig, int timeout,
+                           int podeCancelar, int tipoVerif)
+        int PP_PollGetPIN(int idPP)
+        int PP_AbortGetPIN(int idPP)
+        int PP_GetPINBlock(int idPP, unsigned char* pinBlockOut,
+                           int* pinBlockLen, unsigned char* ksnOut, int* ksnLen)
+
+      PP_GetPIN (bloqueante — mais comum):
+      1. g_ped.setDefaultTimeout(timeout)
+      2. g_ped.sendPinInputParameters(minDig, maxDig, 0)
+      3. tipoVerif == PIN_VERIFICATION_OFFLINE:
+         - Retornar PP_OK imediatamente — kernel EMV gerencia offline PIN
+           internamente durante SDI_CT_ContinueOffline
+      4. tipoVerif == PIN_VERIFICATION_ONLINE:
+         - g_ped.startPinInput(cancelMode)
+         - Mapear retornos: 0=PP_OK, EMV_PED_BYPASS=PP_PIN_BYPASS,
+           EMV_PED_CANCEL=PP_ABORT, outros=PP_ERR_PIN
+         - Setar g_pin_entered = true
+      5. Setar g_pp_state = PP_STATE_PIN
+
+      PP_GetPINBlock:
+      - Chamar SOMENTE após PP_GetPIN retornar PP_OK
+      - libsdi::SdiCrypt crypt; crypt.getEncryptedPin(encPinVec)
+      - Copiar para pinBlockOut (tipicamente 8 bytes ISO format 0)
+      - Obter KSN via crypt.getKeyInventory() + pp_extract_ksn_from_inventory()
+      - KSN: 10 bytes DUKPT
+      - NUNCA logar conteúdo do pinBlock ou KSN
+
+      Tratamento de callbacks de PIN:
+      - Callback 9F Status: repassar para g_pin_digit_count (contagem visual)
+      - Callback 9D Navigator: teclas de navegação (cancelar, confirmar)
+      - Callback PP_ERR_WRONG_PIN: incrementar g_pin_retry_count
+      - Callback PP_ERR_PIN_BLOCKED: setar g_pin_blocked = true, retornar erro
+
+      Incluir tests/test_pin.cpp
+      IMPORTANTE: testes de PIN são mocks — nunca testar com PIN real
+    files:
+      - src/ppcomp_pin.cpp
+      - tests/test_pin.cpp
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # TASK 8 — Callbacks SDI
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: "implement-callbacks"
+    description: |
+      Implementar src/ppcomp_callbacks.cpp — todos os handlers de callback SDI.
+
+      Contexto: O SDI Server dispara callbacks em threads separadas durante
+      operações bloqueantes. A libclisitef espera comportamento síncrono.
+      Os callbacks devem ser rápidos e não bloquear.
+
+      Callbacks a implementar:
+
+      1. cb_emv_ct (SW1=91 EMV Contact):
+         Registrado em SDI_CT_Init_Framework.
+         Recebe TLV com tipo de evento.
+         - EMV_CB_SELECT_APP: selecionar primeiro AID ou sinalizar MULTIAPP
+         - EMV_CB_ONLINE_PIN: setar g_pin_requested=true, g_pin_type=PIN_ONLINE
+         - EMV_CB_SCRIPT_RESULT: salvar em g_script_results[]
+         - EMV_CB_WRONG_PIN: incrementar g_pin_retry_count
+         - EMV_CB_PIN_BLOCKED: setar g_pin_blocked=true
+         Sempre retornar EMV_ADK_OK (não EMV_ADK_WAIT, que bloqueia o SDI)
+
+      2. cb_emv_ctls (SW1=91 CTLS Query):
+         Registrado em SDI_CTLS_Init_Framework.
+         - EMV_CTLS_CB_SELECT_KERNEL: aceitar kernel proposto
+         - EMV_CTLS_CB_ONLINE_PIN: setar g_pin_requested
+
+      3. cb_sdi_status (SW1=9F Status):
+         Registrado em SDI_SetSdiCallback.
+         - PIN entry progress (dígitos digitados) → atualizar g_pin_digit_count
+         - Manual entry progress → similar
+
+      4. cb_card_removal (SW1=9E 04):
+         Registrado em SDI_SetSdiCallback.
+         - Setar g_card_removed_mid_txn = true
+         - Log de aviso (sem dados sensíveis)
+
+      5. cb_ctls_notify (SW1=9E 01):
+         - Eventos de LED e status RF
+         - Geralmente ignorar — LEDs gerenciados pelo VAOS
+
+      Thread safety:
+      - Todos os callbacks devem adquirir std::lock_guard<std::mutex> g_sdi_callback_mutex
+        antes de modificar qualquer variável global
+      - Callbacks devem ser O(microseconds) — não fazer I/O ou alocação
+
+      Incluir tests/test_callbacks.cpp
+    files:
+      - src/ppcomp_callbacks.cpp
+      - tests/test_callbacks.cpp
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # TASK 9 — Mapeamento e serialização
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: "implement-mapping"
+    description: |
+      Implementar src/ppcomp_mapping.cpp e src/ppcomp_errors.cpp.
+
+      ppcomp_mapping.cpp — conversão de structs SDI ↔ ABECS:
+
+        unsigned char mapTxnTypeAbecsToEmv(int abecsTxnType)
+        int mapEmvRetToAbecs(EMV_ADK_INFO emvRet)
+        unsigned char mapModalidadeToTec(int modalidades)
+        void pp_serialize_trans_result(const EMV_CT_TRANSRES_STRUCT*,
+                                        const EMV_SDI_CT_TRANSRES_STRUCT*,
+                                        char* outBuf, int* outLen)
+        void pp_serialize_ctls_result(const EMV_CTLS_TRANSRES_STRUCT*,
+                                       const EMV_SDI_CTLS_TRANSRES_STRUCT*,
+                                       char* outBuf, int* outLen)
+        void pp_serialize_start_result(const EMV_CT_STARTRESULT_STRUCT*,
+                                        char* outBuf, int* outLen)
+        void pp_serialize_msr_abecs(const ABECS_MSR_DATA*, char* outBuf, int* outLen)
+        void pp_parse_tlv_to_msr(ABECS_MSR_DATA*, const unsigned char* tlv, unsigned long len)
+        unsigned char pp_tlv_get_byte(const unsigned char* tlv, unsigned long len, unsigned long tag)
+        bool pp_tlv_get_bytes(const unsigned char* tlv, unsigned long len,
+                              unsigned long tag, unsigned char* out, unsigned long* outLen)
+        void pp_extract_ksn_from_inventory(const std::vector<uint8_t>& inv,
+                                            unsigned char* ksn, int* ksnLen)
+        void pp_save_script_result(const unsigned char* data, unsigned long len)
+        void pp_abecs_serialize(const ABECS_TRANSRESULT*, char* outBuf, int* outLen)
+
+      Mapeamento mapEmvRetToAbecs COMPLETO:
+        EMV_ADK_OK               → PP_OK
+        EMV_ADK_GO_ONLINE        → PP_GO_ONLINE
+        EMV_ADK_ONLINE           → PP_GO_ONLINE
+        EMV_ADK_DECLINE          → PP_OFFLINE_DECLINE
+        EMV_ADK_NO_CARD          → PP_ERR_NOEVENT
+        EMV_ADK_FALLBACK         → PP_FALLBACK_CT
+        EMV_ADK_MULTI_APP        → PP_MULTIAPP
+        EMV_ADK_WRONG_PIN        → PP_ERR_WRONG_PIN (-42)
+        EMV_ADK_PIN_BLOCKED      → PP_ERR_PIN_BLOCKED (-43)
+        EMV_ADK_CARD_BLOCKED     → PP_ERR_CARD_BLOCKED (-44)
+        EMV_ADK_COMM_ERROR       → PP_ERR_PINPAD (-31)  ← crítico
+        EMV_ADK_TIMEOUT          → PP_ERR_TIMEOUT (-41)
+        EMV_ADK_USER_CANCEL      → PP_ABORT (-40)
+        EMV_ADK_INTERNAL_ERROR   → PP_ERR_PINPAD (-31)
+        Outros                   → PP_ERR_GENERIC (-99)
+
+      ppcomp_errors.cpp:
+        const char* PP_GetErrorDescription(int ppCode)
+        Retornar string descritiva para cada código PP_*
+
+      Incluir tests/test_mapping.cpp com cobertura completa de todos os mapeamentos
+    files:
+      - src/ppcomp_mapping.cpp
+      - src/ppcomp_errors.cpp
+      - tests/test_mapping.cpp
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # TASK 10 — CMakeLists.txt e build system
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: "configure-build"
+    description: |
+      Criar sistema de build completo para libppcomp.
+
+      Arquivos a criar:
+
+      1. CMakeLists.txt (raiz):
+         - cmake_minimum_required(VERSION 3.22)
+         - project(libppcomp VERSION 1.0.0 LANGUAGES CXX)
+         - set(CMAKE_CXX_STANDARD 17)
+         - Flags de compilação: -fno-rtti, -fno-exceptions, -Wall, -Werror,
+           -Wno-unused-parameter (SDI tem muitos parâmetros não usados)
+         - ANDROID_ABI deve ser arm64-v8a
+         - Importar todas as bibliotecas estáticas do ADK de libs/arm64-v8a/
+         - Criar target ppcomp SHARED com todos os src/*.cpp
+         - target_link_libraries: sdiclient, emv_ct_client, emv_ctls_client,
+           tlv_util, sdiprotocol (SHARED), ipc (SHARED), vfilog, android, log
+         - CRITICAL: configurar doNotStrip via set_target_properties
+         - Subdiretório tests/ com Google Test (FetchContent ou find_package)
+
+      2. build.gradle (módulo Android):
+         - defaultConfig: minSdk 28, targetSdk 34
+         - abiFilters "arm64-v8a" SOMENTE
+         - externalNativeBuild.cmake.path = "CMakeLists.txt"
+         - packagingOptions.doNotStrip "**/*.so"
+         - dependencies: implementation fileTree(libs/)
+
+      3. VERSIONS.TXT:
+         Formato exigido pela Software Express para inclusão no pacote CliSiTef:
+         LIBPPCOMP_VERSION=1.0.0
+         CLISITEF_MIN_VERSION=7.0.115.34
+         CLISITEF_MAX_VERSION=7.x.x.x
+         ADK_VERSION=5.0.3
+         TERMINAL=Verifone V660P-A
+         VAOS_VERSION=VOS3
+         NDK_VERSION=26.2.11394342
+         ABI=arm64-v8a
+         ABECS_SPEC=2.20
+
+      4. .clang-format:
+         BasedOnStyle: Google
+         ColumnLimit: 100
+         IndentWidth: 4
+         PointerAlignment: Right
+
+      5. scripts/build.sh:
+         Script para build com NDK apontando para arm64-v8a
+         com opção --release e --debug
+    files:
+      - CMakeLists.txt
+      - build.gradle
+      - VERSIONS.TXT
+      - .clang-format
+      - scripts/build.sh
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # TASK 11 — Testes de integração e cenários de homologação
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: "implement-integration-tests"
+    description: |
+      Criar suite de testes de integração cobrindo todos os cenários de
+      homologação exigidos pela Software Express e adquirentes brasileiras.
+
+      Criar tests/integration/ com:
+
+      1. test_homologacao_se.cpp — cenários Software Express:
+         - TC_001: PP_Open + carga de tabelas + PP_Close (sem crash)
+         - TC_002: Carga de 20 AIDs (inclui Visa, Master, Elo, Amex, Hipercard)
+         - TC_003: Carga de 50 CAPKs
+         - TC_004: MSR trilhas 1 e 2 disponíveis e cifradas
+         - TC_005: EMV CT offline aprovado (mock SDI retorna TC)
+         - TC_006: EMV CT online aprovado (mock ARQC→ARPC→TC)
+         - TC_007: EMV CT declinado online (mock ARQC→ARPC→AAC)
+         - TC_008: CTLS abaixo do limite (sem PIN)
+         - TC_009: CTLS acima do CVM limit (com PIN online)
+         - TC_010: Fallback CT após falha CTLS
+         - TC_011: PIN bypass
+         - TC_012: PIN errado — contagem de tentativas 1 a 3
+         - TC_013: PIN bloqueado
+         - TC_014: Abort durante detecção
+         - TC_015: Abort durante PIN entry
+         - TC_016: Remoção de cartão durante ContinueOffline
+         - TC_017: Timeout de detecção (30s)
+         - TC_018: Múltiplos AIDs — seleção do segundo candidato
+
+      2. test_homologacao_adquirentes.cpp — cenários por adquirente:
+         - Cielo: crédito à vista, parcelado, débito, Elo
+         - Rede: crédito, débito, voucher
+         - Stone: crédito, débito
+         - Getnet: crédito, débito
+         - Fiserv: crédito, débito (Fiserv é a adquirente da Fiserv Brasil!)
+         - Todos os cenários de cancelamento/estorno
+
+      3. mocks/sdi_mock.h + mocks/sdi_mock.cpp:
+         - Mock completo de libsdiclient usando Google Mock
+         - MOCK_METHOD para cada função SDI usada pela libppcomp
+         - Helpers para configurar cenários de aprovação/declinação
+
+      4. tests/CMakeLists.txt:
+         - Configurar Google Test via FetchContent
+         - Adicionar cada test_*.cpp como executável separado
+         - Adicionar target "test" que roda todos
+
+      Os testes devem rodar em x86_64 Linux (CI) usando os mocks SDI.
+      Não devem requerer hardware real.
+    files:
+      - tests/integration/test_homologacao_se.cpp
+      - tests/integration/test_homologacao_adquirentes.cpp
+      - tests/mocks/sdi_mock.h
+      - tests/mocks/sdi_mock.cpp
+      - tests/CMakeLists.txt
