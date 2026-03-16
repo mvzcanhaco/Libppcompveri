@@ -75,40 +75,46 @@ protected:
     // Simula detecção de cartão chip CT
     void detectCardCT() {
         EXPECT_CALL(cls, cardDetection_startSelection(_, _, _, _)).WillOnce(Return(EMV_ADK_OK));
-        ASSERT_EQ(PP_OK, PP_StartCheckEvent(0, 0x07, 30));
+        ASSERT_EQ(PP_OK, PP_StartCheckEvent(0, 0x07, 30, 1));
 
         EXPECT_CALL(cls, cardDetection_pollTechnology())
             .WillOnce(Return(libsdi::Technology::CHIP_CT));
+        int  tecResult = 0;
         char evtBuf[256] = {};
         int  evtLen = sizeof(evtBuf);
-        ASSERT_EQ(PP_OK, PP_CheckEvent(0, evtBuf, &evtLen));
+        ASSERT_EQ(PP_OK, PP_CheckEvent(0, &tecResult, evtBuf, &evtLen));
+        ASSERT_EQ(0x01, tecResult);
         ASSERT_EQ(PPState::CARD_CT, g_pp_state);
     }
 
     // Simula detecção de cartão CTLS
     void detectCardCTLS() {
         EXPECT_CALL(cls, cardDetection_startSelection(_, _, _, _)).WillOnce(Return(EMV_ADK_OK));
-        ASSERT_EQ(PP_OK, PP_StartCheckEvent(0, 0x07, 30));
+        ASSERT_EQ(PP_OK, PP_StartCheckEvent(0, 0x07, 30, 1));
 
         EXPECT_CALL(cls, cardDetection_pollTechnology())
             .WillOnce(Return(libsdi::Technology::CTLS));
+        int  tecResult = 0;
         char evtBuf[256] = {};
         int  evtLen = sizeof(evtBuf);
-        ASSERT_EQ(PP_OK, PP_CheckEvent(0, evtBuf, &evtLen));
+        ASSERT_EQ(PP_OK, PP_CheckEvent(0, &tecResult, evtBuf, &evtLen));
+        ASSERT_EQ(0x02, tecResult);
         ASSERT_EQ(PPState::CARD_CTLS, g_pp_state);
     }
 
     // Simula detecção de tarja magnética
     void detectCardMSR() {
         EXPECT_CALL(cls, cardDetection_startSelection(_, _, _, _)).WillOnce(Return(EMV_ADK_OK));
-        ASSERT_EQ(PP_OK, PP_StartCheckEvent(0, 0x07, 30));
+        ASSERT_EQ(PP_OK, PP_StartCheckEvent(0, 0x07, 30, 1));
 
         EXPECT_CALL(cls, cardDetection_pollTechnology())
             .WillOnce(Return(libsdi::Technology::MSR));
         EXPECT_CALL(emv, SDI_fetchTxnTags(_, _, _, _)).WillOnce(Return(EMV_ADK_OK));
+        int  tecResult = 0;
         char evtBuf[512] = {};
         int  evtLen = sizeof(evtBuf);
-        ASSERT_EQ(PP_OK, PP_CheckEvent(0, evtBuf, &evtLen));
+        ASSERT_EQ(PP_OK, PP_CheckEvent(0, &tecResult, evtBuf, &evtLen));
+        ASSERT_EQ(0x04, tecResult);
         ASSERT_EQ(PPState::CARD_MSR, g_pp_state);
     }
 
@@ -128,7 +134,7 @@ protected:
         EXPECT_CALL(emv, SDI_CTLS_SetupTransaction(amount, 0, CURRENCY_BRL_CODE, _, _))
             .WillOnce(Return(EMV_ADK_OK));
         EXPECT_CALL(cls, dialog_requestCard(_, _)).WillOnce(Return(EMV_ADK_OK));
-        ASSERT_EQ(PP_CTLS_WAITING, PP_GoOnChipCTLS(0, amount, 0, 0, 1, outBuf, &outLen));
+        ASSERT_EQ(PP_CTLS_WAITING, PP_GoOnChipCTLS(0, amount, 0, 0, outBuf, &outLen));
         g_pp_state = PPState::EMV_CTLS_POLLING;
     }
 
@@ -318,7 +324,8 @@ TEST_F(HomologacaoSE, TC06_CompraCtls_GoOnline_Aprovado) {
     EXPECT_CALL(emv, SDI_fetchTxnTags(_, _, _, _)).WillOnce(Return(EMV_ADK_OK));
 
     EXPECT_EQ(PP_OFFLINE_APPROVE,
-              PP_FinishChipCTLS(0, reinterpret_cast<char*>(arpc), 8, nullptr, 0, outBuf, &outLen));
+              PP_FinishChipCTLS(0, reinterpret_cast<char*>(arpc), 8,
+                                nullptr, 0, outBuf, &outLen));
 }
 
 // ─── TC07: Compra débito chip — offline ──────────────────────────────────────
@@ -535,15 +542,16 @@ TEST_F(HomologacaoSE, TC14_FallbackCtlsParaChip) {
 TEST_F(HomologacaoSE, TC15_TarjaMagnetica_MSR) {
     // Detecção via tarja
     EXPECT_CALL(cls, cardDetection_startSelection(_, _, _, _)).WillOnce(Return(EMV_ADK_OK));
-    ASSERT_EQ(PP_OK, PP_StartCheckEvent(0, 0x04, 30));  // Somente MSR
+    ASSERT_EQ(PP_OK, PP_StartCheckEvent(0, 0x04, 30, 1));  // Somente MSR
 
     EXPECT_CALL(cls, cardDetection_pollTechnology())
         .WillOnce(Return(libsdi::Technology::MSR));
     EXPECT_CALL(emv, SDI_fetchTxnTags(_, _, _, _)).WillOnce(Return(EMV_ADK_OK));
 
+    int  tecResult = 0;
     char evtBuf[512] = {};
     int  evtLen = sizeof(evtBuf);
-    EXPECT_EQ(PP_OK, PP_CheckEvent(0, evtBuf, &evtLen));
+    EXPECT_EQ(PP_OK, PP_CheckEvent(0, &tecResult, evtBuf, &evtLen));
 
     EXPECT_EQ(PPState::CARD_MSR, g_pp_state);
     EXPECT_EQ(TEC_MSR, g_current_tec);

@@ -135,7 +135,6 @@ int PP_GoOnChipContinue(int idPP, char* outBuf, int* outLen) {
             abecs_ret = PP_OFFLINE_APPROVE;
             break;
         case EMV_ADK_GO_ONLINE:
-        case EMV_ADK_ONLINE:
             abecs_ret = PP_GO_ONLINE;
             break;
         case EMV_ADK_DECLINE:

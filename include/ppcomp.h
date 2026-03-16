@@ -178,8 +178,11 @@ int PP_PollCTLS(int idPP, char* outBuf, int* outLen);
 
 /**
  * PP_FinishChipCTLS — Finaliza transação CTLS online.
+ * @param scripts    Scripts issuer (pode ser NULL — ADK CTLS ignora nesta versão)
+ * @param scriptsLen Comprimento dos scripts (0 se NULL)
  */
 int PP_FinishChipCTLS(int idPP, char* arpc, int arpcLen,
+                      char* scripts, int scriptsLen,
                       char* outBuf, int* outLen);
 
 /**
@@ -238,6 +241,15 @@ int PP_GetPINBlock(int idPP, unsigned char* pinBlock, int* pinBlockLen,
  * @return PP_OK ou erro
  */
 int PP_GetCard(int idPP, char* dadosCartao, int* tamDados);
+
+// ─── Utilitários ──────────────────────────────────────────────────────────────
+
+/**
+ * PP_GetErrorDescription — Retorna descrição textual de um código de retorno PP_*.
+ * @param ppCode  Código de retorno (PP_OK, PP_ERR_*, etc.)
+ * @return String estática com descrição (nunca NULL)
+ */
+const char* PP_GetErrorDescription(int ppCode);
 
 #ifdef __cplusplus
 }

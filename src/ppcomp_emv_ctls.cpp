@@ -116,7 +116,6 @@ int PP_PollCTLS(int idPP, char* outBuf, int* outLen) {
             return PP_OFFLINE_APPROVE;
 
         case EMV_ADK_GO_ONLINE:
-        case EMV_ADK_ONLINE:
             LOG_PP_INFO("PP_PollCTLS: ir ao autorizador (ARQC CTLS)");
             pp_serialize_ctls_result(&transResult, &sdiExtra, outBuf, outLen);
             // Estado permanece CTLS_POLLING até PP_FinishChipCTLS ou PP_AbortCTLS
@@ -151,10 +150,15 @@ int PP_PollCTLS(int idPP, char* outBuf, int* outLen) {
     }
 }
 
-int PP_FinishChipCTLS(int idPP, char* arpc, int arpcLen, char* outBuf, int* outLen) {
+int PP_FinishChipCTLS(int idPP, char* arpc, int arpcLen,
+                      char* scripts, int scriptsLen,
+                      char* outBuf, int* outLen) {
     (void)idPP;
+    (void)scripts;     // SDI_CTLS_ContinueOnline não aceita scripts nesta versão do ADK
+    (void)scriptsLen;
 
-    LOG_PP_INFO("PP_FinishChipCTLS: resposta online arpcLen=%d", arpcLen);
+    LOG_PP_INFO("PP_FinishChipCTLS: resposta online arpcLen=%d scriptsLen=%d",
+                arpcLen, scriptsLen);
 
     if (!g_initialized) return PP_ERR_INIT;
     if (g_pp_state != PPState::EMV_CTLS_POLLING) {
